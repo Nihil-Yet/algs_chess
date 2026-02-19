@@ -14,7 +14,7 @@ enum class FigureType {
 
 struct Cell {
     char x;  // 'a' - 'h'
-    int y;   // 1 - 8
+    char y;   // 1 - 8
 };
 
 struct Figure {
@@ -29,7 +29,7 @@ struct InputData {
 };
 
 void read_input(InputData& data);
-void print_output(char x, int y, int ping);
+void print_output(Cell& c0, Cell& c1, int ping, const std::string& msg);
 
 int main()
 {
@@ -52,7 +52,7 @@ void read_input(InputData& data)
     for (int i = 0; i < n; i++) {
         std::getline(std::cin, line); 
         data.figures[i].position.x = line[0];
-        data.figures[i].position.y = line[1] - '0';
+        data.figures[i].position.y = line[1];
         data.figures[i].color      = line[3];
         data.figures[i].type       = static_cast<FigureType>(line[5] - '0');
     }
@@ -60,9 +60,8 @@ void read_input(InputData& data)
     return;
 }
 
-void print_output(char x, int y, int ping, const std::string& msg)
+void print_output(Cell& c0, Cell& c1, int ping, const std::string& msg)
 {
     std::cout << "// " << msg << '\n'
-        << x << y << ' ' << ping; 
+        << c0.x << c0.y << c1.x << c1.y << ' ' << ping; 
 }
-
