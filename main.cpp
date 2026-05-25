@@ -37,12 +37,13 @@ struct Figure {
     FigureType type;
 };
 
-// Полный входной кадр от сервера на один ход.
+// то, шо получаем от сервера: мой прошлый ping, кол-во фигур, список всех фигур, взятие на проходе, рокировка 
 struct InputData {
     int pong = 0;
-    std::vector<Figure> figures;
+    int count = 0;
+    std::vector<Figure> figures;                        // (клетка, цвет, тип)
     Cell ep_square;
-    bool castling[4] = {false, false, false, false}; // [WK, WQ, BK, BQ]
+    bool castling[4] = {false, false, false, false};    // (длин мая, кор мая, длин немая, кор немая)
 };
 
 void read_input(InputData& data) {
@@ -51,6 +52,7 @@ void read_input(InputData& data) {
     if (!(std::cin >> data.pong)) return;
     int n;
     std::cin >> n;
+    data.count = n;
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
     data.figures.resize(n);
