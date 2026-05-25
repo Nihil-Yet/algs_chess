@@ -195,18 +195,19 @@ public:
 };
 
 int main() {
-    ChessBot bot;
-    InputData in;
+    ChessBot bot;       // создаем ботика
+    InputData in;       // данные от сервера
 
+    // пока геймим
     while (true) {
         read_input(in);
-        if (in.pong < 0) break;
 
-        Move best = bot.get_move(in);
+        Move best = bot.get_move(in);                       // лучший ход бота ([CHECK] пока только дебюты)
+        int next_ping = (in.pong<=0) ? 1 : (in.pong+1);     // увеличиваем по кд ping на 1
         if (best.valid()) {
-            output_move(best.from, best.to, in.pong);
+            output_move(best.from, best.to, next_ping);
         } else {
-            debug("No opening move for current key");
+            debug("Нет хода по дебюту");
         }
     }
 
