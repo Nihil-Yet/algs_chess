@@ -4,6 +4,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <limits>
+#include <cstddef>
 
 // тип фигур
 enum class FigureType {
@@ -60,9 +61,18 @@ struct Move {
 // библиотека дебютов, епта
 class OpeningBook {
 private:
+    // структура для дебага - ход и название дебюты [CHECK] - ПОТОМ УДАЛИТЬ!!
+    struct BookMove {
+        std::string move;
+        std::string opening;
+    };
     // хэээш :3333
-    // история ходов - ключ; значения - мой готовый ход из библиотеки
-    std::unordered_map<std::string, std::string> book;
+    // история ходов - ключ; значения - варианты моих ходов из дебютной книги
+    std::unordered_map<std::string, std::vector<BookMove>> book;
+    // для дебага [CHECK] - ПОТОМ УДАЛИТЬ!!
+    void add(const std::string& key, const std::string& move, const std::string& opening) {
+        book[key].push_back({move, opening});
+    }
 
 public:
     OpeningBook() { load(); }
@@ -71,19 +81,128 @@ public:
     // т.е., если в начале - мы белые; если в конце - мы черные
     // держим две библиотеки для дебютов за белых/черных
     void load() {
-        // Базовые примеры для белых.
-        //book[""] = "e2e4";
-        //book["e2e4"] = "e7e5";
-        //book["e2e4_e7e5"] = "g1f3";
-        //book["e2e4_e7e5_g1f3_b8c6"] = "f1c4";
 
-        // Пример для черных.
-        // book["e2e4"] = "c7c5";
+        // ДЛЯ БЕЛЫХ С E4!!!!!!!!!!!!!!!!!!!!!!!
+        add("", "e2e4", "БЕЛЫЕ: старт 1.e4");
+
+        // 1) Итальянская: e4 e5 Nf3 Nc6 Bc4
+        add("e2e4_e7e5", "g1f3", "Итальянская партия");
+        add("e2e4_e7e5_g1f3_b8c6", "f1c4", "Итальянская партия");
+        add("e2e4_e7e5_g1f3_b8c6_f1c4_f8c5", "c2c3", "Итальянская партия");
+        add("e2e4_e7e5_g1f3_b8c6_f1c4_f8c5_c2c3_g8f6", "d2d3", "Итальянская партия");
+
+        // 2) Шотландская: e4 e5 Nf3 Nc6 d4
+        add("e2e4_e7e5_g1f3_b8c6", "d2d4", "Шотландская партия");
+
+        // 3) Венская: e4 e5 Nc3
+        add("e2e4_e7e5", "b1c3", "Венская партия");
+
+        // 4) Испанкая: e4 e5 Nf3 Nc6 Bb5 a6 Ba4
+        add("e2e4_e7e5_g1f3_b8c6", "f1b5", "Испанская партия");
+        add("e2e4_e7e5_g1f3_b8c6_f1b5_a7a6", "b5a4", "Испанская партия");
+
+        // 5) Королевский гамбит: e4 e5 f4
+        add("e2e4_e7e5", "f2f4", "Королевский гамбит");
+
+        // 6) Открытая Сицилианка: e4 c5 Nf3 d6 d4 cxd4 Nxd4
+        add("e2e4_c7c5", "g1f3", "Открытая Сицилианская");
+        add("e2e4_c7c5_g1f3_d7d6", "d2d4", "Открытая Сицилианская");
+        add("e2e4_c7c5_g1f3_d7d6_d2d4_c5d4", "f3d4", "Открытая Сицилианская");
+
+        // 7) Алапин: e4 c5 c3
+        add("e2e4_c7c5", "c2c3", "Алапин");
+
+        // 8) Атака Гран-При: e4 c5 Nc3 Nc6 f4
+        add("e2e4_c7c5", "b1c3", "Атака Гран-При");
+        add("e2e4_c7c5_b1c3_b8c6", "f2f4", "Атака Гран-При");
+
+        // 9) Московский/Россолимо-вариант: e4 c5 Nf3 Nc6 Bb5
+        add("e2e4_c7c5", "g1f3", "Московский/Россолимо-вариант");
+        add("e2e4_c7c5_g1f3_b8c6", "f1b5", "Московский/Россолимо-вариант");
+
+        // 10) Французская: e4 e6 d4 d5 e5
+        add("e2e4_e7e6", "d2d4", "Французская");
+        add("e2e4_e7e6_d2d4_d7d5", "e4e5", "Французская");
+
+        // 11) Французская Classical: e4 e6 d4 d5 Nc3
+        add("e2e4_e7e6_d2d4_d7d5", "b1c3", "Французская классика");
+
+        // 12) Французская Тарраш: e4 e6 d4 d5 Nd2
+        add("e2e4_e7e6_d2d4_d7d5", "b1d2", "Французская Тарраша");
+
+        // 13) Каро-Канн: e4 c6 d4 d5 e5
+        add("e2e4_c7c6", "d2d4", "Каро-Канн");
+        add("e2e4_c7c6_d2d4_d7d5", "e4e5", "Каро-Канн");
+
+        // 14) Каро-Канн два коня: e4 c6 Nc3 d5 Nf3
+        add("e2e4_c7c6", "b1c3", "Каро-Канн два коня");
+        add("e2e4_c7c6_b1c3_d7d5", "g1f3", "Каро-Канн два коня");
+
+        // ДЛЯ ЧЕРНЫХ ПРОТИВ E4/Е5!!!!!!!!!!!!!!!!!!!!!!!
+
+        // 1) Против 1.e4: ...e5 (классика)
+        add("e2e4", "e7e5", "Открытая игра за черных");
+
+        // 2) Берлин против Испанки
+        add("e2e4_e7e5_g1f3_b8c6_f1b5", "g8f6", "Берлинская защита");
+
+        // 3) Каро-Канн
+        add("e2e4", "c7c6", "Каро-Канн");
+        add("e2e4_c7c6_d2d4", "d7d5", "Каро-Канн");
+
+        // 4) Скандинавская
+        add("e2e4", "d7d5", "Скандинавская защита");
+        add("e2e4_d7d5_e4d5", "d8d5", "Скандинавская защита");
+
+        // 5) Пирц
+        add("e2e4", "d7d6", "Защита Пирца");
+        add("e2e4_d7d6_d2d4", "g8f6", "Защита Пирца");
+        add("e2e4_d7d6_d2d4_g8f6_b1c3", "g7g6", "Защита Пирца");
+
+        // 6) Модерн-Бенони
+        add("e2e4", "g7g6", "Модерн-Бенони");
+        add("e2e4_g7g6_d2d4", "f8g7", "Модерн-Бенони");
+        add("e2e4_g7g6_d2d4_f8g7_b1c3", "d7d6", "Модерн-Бенони");
+
+        // 7) Французская
+        add("e2e4", "e7e6", "Французская защита");
+        add("e2e4_e7e6_d2d4", "d7d5", "Французская защита");
+
+        // 8) Отказанный ферзевой гамбит против 1.d4
+        add("d2d4", "d7d5", "Отказанный ферзевой гамбит");
+        add("d2d4_d7d5_c2c4", "e7e6", "Отказанный ферзевой гамбит");
+
+        // 9) Славянская
+        add("d2d4", "d7d5", "Славянская защита");
+        add("d2d4_d7d5_c2c4", "c7c6", "Славянская защита");
+
+        // 10) Чебаненко-идея
+        add("d2d4_d7d5_c2c4_c7c6_b1c3", "a7a6", "Славянская Чебаненко");
+
+        // 11) Голландская
+        add("d2d4", "f7f5", "Голландская защита");
+
+        // 12) Защита Нимцовича
+        add("d2d4", "g8f6", "Защита Нимцовича");
+        add("d2d4_g8f6_c2c4", "e7e6", "Защита Нимцовича");
+        add("d2d4_g8f6_c2c4_e7e6_b1c3", "f8b4", "Защита Нимцовича");
+
+        // 13) Симметрия против Английской
+        add("c2c4", "c7c5", "Английская симметрия");
+
+        // 14) Универсальная против 1.Nf3
+        add("g1f3", "d7d5", "Универсальная схема против Nf3");
+        add("g1f3_d7d5", "g8f6", "Универсальная схема против Nf3");
+        add("g1f3_d7d5_g8f6", "e7e6", "Универсальная схема против Nf3");
     }
     // имщем ключики
-    std::string lookup(const std::string& position_key) const {
-        auto it = book.find(position_key);                  // хэшируем, ищем совпадение ключей
-        return (it != book.end()) ? it->second : "";        // вовзаращаем ход, если ключ найден, иначе пустую строку ([CHECK] потом исправить не на путсую?)
+    BookMove lookup(const std::string& position_key, int variation_seed = 0) const {
+        auto it = book.find(position_key);                              // хэшируем, ищем совпадение ключей
+        if (it == book.end() || it->second.empty()) return {"", ""};    // если ключика нема
+        const auto& vars = it->second;
+        // выбирает какое продолжение выбрать, если несколько вариантов их одной точки путем остатка от деления номера хода на число вариантов
+        std::size_t idx = static_cast<std::size_t>(variation_seed) % vars.size();
+        return vars[idx];
     }
 };
 
@@ -163,14 +282,17 @@ private:
     }
 
     // совершаем ход из библиотеки дебютов: откуда -> кудась
-    Move get_opening_move() {
+    Move get_opening_move(int variation_seed) {
         std::string key = make_position_key();
-        std::string response = opening.lookup(key);
-        if (!response.empty() && response.length() == 4) {
+        auto response = opening.lookup(key, variation_seed);
+        const std::string& move = response.move;
+        const std::string& opening_name = response.opening;
+        if (!move.empty() && move.length() == 4) {
             Move m;
-            m.from = {response[0], response[1]};
-            m.to = {response[2], response[3]};
-            debug("Opening book: " + response);
+            m.from = {move[0], move[1]};
+            m.to = {move[2], move[3]};
+            // [CHECK] - ДЕБАГ ДЕБЮТОВ, ШОБ ЗНАТЬ КАКОЙ СЕЙЧАС РАБОТАЕТ. ПОТОМ УДАЛИТЬ
+            debug("Дебют: " + opening_name + " | ход: " + move);
             return m;
         }
         return Move();
@@ -180,8 +302,8 @@ public:
     // конструктор по умолчанию
     ChessBot() = default;
     // совершает ход 
-    Move get_move(const InputData&) {
-        Move m = get_opening_move();
+    Move get_move(const InputData& in) {
+        Move m = get_opening_move(in.pong);
         // добавляем в историю, если ход валиден
         if (m.valid()) {
             move_history += (move_history.empty() ? "" : "_") + m.str();
