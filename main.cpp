@@ -154,14 +154,15 @@ void output_move(const Cell& from, const Cell& to, int ping) {
 
 class ChessBot {
 private:
-    OpeningBook opening;
-    // Упрощенный ключ: история ходов через "_".
-    std::string move_history;
+    OpeningBook opening;            // библиотека дебютов
+    std::string move_history;       // история ходов через '_'
 
+    // текущий ключ позиции
     std::string make_position_key() const {
         return move_history;
     }
 
+    // совершаем ход из библиотеки дебютов: откуда -> кудась
     Move get_opening_move() {
         std::string key = make_position_key();
         std::string response = opening.lookup(key);
@@ -176,17 +177,18 @@ private:
     }
 
 public:
+    // конструктор по умолчанию
     ChessBot() = default;
-
+    // совершает ход 
     Move get_move(const InputData&) {
-        // В этом упрощенном варианте бот играет только по дебютной книге.
         Move m = get_opening_move();
+        // добавляем в историю, если ход валиден
         if (m.valid()) {
             move_history += (move_history.empty() ? "" : "_") + m.str();
         }
         return m;
     }
-
+    // добавляем ход соперника
     void add_opponent_move(const std::string& opp_move) {
         move_history += (move_history.empty() ? "" : "_") + opp_move;
     }
