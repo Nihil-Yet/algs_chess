@@ -3,7 +3,7 @@
 #include <string>
 #include <sstream>
 #include <unordered_map>
-#include <limits>
+#include <map>
 #include <cstddef>
 
 // тип фигур
@@ -60,27 +60,142 @@ struct Move {
 
 // библиотека дебютов, епта
 class OpeningBook {
-private:
-    // структура для дебага - ход и название дебюты [CHECK] - ПОТОМ УДАЛИТЬ!!
+public:
+    // запись из библиотеки: какой ход и как называется дебют
     struct BookMove {
         std::string move;
         std::string opening;
     };
-    // хэээш :3333
-    // история ходов - ключ; значения - варианты моих ходов из дебютной книги
-    std::unordered_map<std::string, std::vector<BookMove>> book;
-    // для дебага [CHECK] - ПОТОМ УДАЛИТЬ!!
+
+private:
+    // раздельные библиотеки по стороне
+    std::unordered_map<std::string, std::vector<BookMove>> white_book;
+    std::unordered_map<std::string, std::vector<BookMove>> black_book;
+    
+    // те же библиотеки, но ключ уже хэш позиции
+    std::unordered_map<std::string, std::vector<BookMove>> white_hash_book;
+    std::unordered_map<std::string, std::vector<BookMove>> black_hash_book;
+
+
+    bool loading_white = true;
+    using Board = std::map<std::string, std::pair<char, int>>; // клетка -> (цвет, тип)
+
+    // берем вариант из списка по индексу
+    static BookMove pick_from_bucket(const std::vector<BookMove>& vars, int variation_seed) {
+        if (vars.empty()) return {"", ""};
+        std::size_t idx = static_cast<std::size_t>(variation_seed) % vars.size();
+        return vars[idx];
+    }
+    // добавляем ход в нужную библиотеку
     void add(const std::string& key, const std::string& move, const std::string& opening) {
-        book[key].push_back({move, opening});
+        auto& target = loading_white ? white_book : black_book;
+        target[key].push_back({move, opening});
+    }
+
+    // разбиваем history key по "_"
+    static std::vector<std::string> split_key(const std::string& key) {
+        std::vector<std::string> out;
+        if (key.empty()) return out;
+        std::stringstream ss(key);    // поток, чтобы удобно резать строку по "_"
+        std::string item;             // текущий кусок между "_"
+        while (std::getline(ss, item, '_')) {
+            if (!item.empty()) out.push_back(item);
+        }
+        return out;
+    }
+
+    // доска для симуляции истории
+    static Board start_board(bool bot_white) {
+        Board b;    // карта позиции: "клетка -> (цвет, тип)"
+        auto put = [&](const std::string& sq, char c, int t) { b[sq] = {c, t}; };   // спидран по карте
+
+        char bottom = bot_white ? '+' : '-';    // кто стоит снизу 
+        put("a1", bottom, 4); put("b1", bottom, 2); put("c1", bottom, 3); put("d1", bottom, 5);     // крутые фигуры
+        put("e1", bottom, 6); put("f1", bottom, 3); put("g1", bottom, 2); put("h1", bottom, 4);     // лоховские пешки какие-то
+        // оп-оп, досочка
+        for (char f = 'a'; f <= 'h'; f++) {
+            std::string sq; sq += f; sq += '2';     // крутые ребята
+            put(sq, bottom, 1);                     // пешки
+        }
+
+        char top = bot_white ? '-' : '+';    // кто стоит сверху 
+        put("a8", top, 4); put("b8", top, 2); put("c8", top, 3); put("d8", top, 5);     // крутые фигуры
+        put("e8", top, 6); put("f8", top, 3); put("g8", top, 2); put("h8", top, 4);     // лоховские пешки какие-то
+        for (char f = 'a'; f <= 'h'; f++) {
+            std::string sq; sq += f; sq += '7';     // крутые ребята
+            put(sq, top, 1);                        // пешки
+        }
+        return b;
+    }
+
+    // применяем ход на доске
+    static bool apply_sim_move(Board& b, const std::string& mv, char expected_color) {
+        if (mv.size() != 4) return false;
+        std::string from = mv.substr(0, 2);
+        std::string to = mv.substr(2, 2);
+        auto it = b.find(from);     // ищем фигуру на ОТ
+        if (it == b.end()) return false;
+        if (it->second.first != expected_color) return false;
+        auto piece = it->second;
+        b.erase(it);                                  // ОТ
+        b[to] = piece;                                // ДО
+        return true;
+    }
+
+    // хэш позиции на доске (одна функция для симуляции и для реального входа)
+    static std::string hash_board(const Board& b) {
+        std::string h;
+        for (const auto& it : b) {
+            h += it.first;                     // клетка, например "e4"
+            h += it.second.first;              // цвет
+            h += char('0' + it.second.second); // тип
+            h += ';';                          // разделитель записи
+        }
+        return h;
+    }
+
+    // хэш реальной позиции
+    static std::string hash_input_board(const InputData& in) {
+        std::map<std::string, std::pair<char, int>> b;
+        for (const auto& f : in.figures) {
+            std::string sq; sq += f.pos.x; sq += f.pos.y;
+            b[sq] = {f.color, static_cast<int>(f.type)};    // собираем позицию из входа сервера
+        }
+        return hash_board(b);
+    }
+
+    // строим хэш из истории ключей нащей библиотеки
+    void build_hash_book(bool for_white) {
+        const auto& src = for_white ? white_book : black_book;
+        auto& dst = for_white ? white_hash_book : black_hash_book;
+        dst.clear();
+
+        for (const auto& kv : src) {
+            const std::string& key = kv.first;
+            const auto& responses = kv.second;     // ответы для этого ключа
+            Board b = start_board(for_white);
+            auto plies = split_key(key);
+            char mover = for_white ? '+' : '-';    // кто ходит первым
+            bool ok = true;
+
+            for (const auto& mv : plies) {
+                if (!apply_sim_move(b, mv, mover)) { ok = false; break; }
+                mover = (mover == '+') ? '-' : '+';     // смена хода
+            }
+            if (!ok) continue;
+
+            std::string pos_hash = hash_board(b);                   // хэш позиции
+            auto& bucket = dst[pos_hash];
+            for (const auto& bm : responses) bucket.push_back(bm); // переносим варианты
+        }
     }
 
 public:
     OpeningBook() { load(); }
 
-    // определение белые мы или черные происходит в начале игры, относительно того где стоит наш '+':
-    // т.е., если в начале - мы белые; если в конце - мы черные
-    // держим две библиотеки для дебютов за белых/черных
+    // загружаем библиотеки дебютов: сначала белых, потом черных
     void load() {
+        loading_white = true;
 
         // ДЛЯ БЕЛЫХ С E4!!!!!!!!!!!!!!!!!!!!!!!
         add("", "e2e4", "БЕЛЫЕ: старт 1.e4");
@@ -139,6 +254,7 @@ public:
         add("e2e4_c7c6_b1c3_d7d5", "g1f3", "Каро-Канн два коня");
 
         // ДЛЯ ЧЕРНЫХ ПРОТИВ E4/Е5!!!!!!!!!!!!!!!!!!!!!!!
+        loading_white = false;
 
         // 1) Против 1.e4: ...e5 (классика)
         add("e2e4", "e7e5", "Открытая игра за черных");
@@ -194,72 +310,69 @@ public:
         add("g1f3", "d7d5", "Универсальная схема против Nf3");
         add("g1f3_d7d5", "g8f6", "Универсальная схема против Nf3");
         add("g1f3_d7d5_g8f6", "e7e6", "Универсальная схема против Nf3");
+
+        // после загрузки строковых ключей строим хэш-книги позиций
+        build_hash_book(true);
+        build_hash_book(false);
     }
-    // имщем ключики
-    BookMove lookup(const std::string& position_key, int variation_seed = 0) const {
-        auto it = book.find(position_key);                              // хэшируем, ищем совпадение ключей
-        if (it == book.end() || it->second.empty()) return {"", ""};    // если ключика нема
-        const auto& vars = it->second;
-        // выбирает какое продолжение выбрать, если несколько вариантов их одной точки путем остатка от деления номера хода на число вариантов
-        std::size_t idx = static_cast<std::size_t>(variation_seed) % vars.size();
-        return vars[idx];
+    // lookup по ключу истории
+    BookMove lookup(bool is_white, const std::string& position_key, int variation_seed = 0) const {
+        const auto& target = is_white ? white_book : black_book;        // смотрим какую библиотеку юзаем
+        auto it = target.find(position_key);                            // хэшируем, ищем совпадение ключей
+        if (it == target.end()) return {"", ""};                        // если ключика нема
+        return pick_from_bucket(it->second, variation_seed);
     }
+
+    // по хэшу текущей позиции
+    BookMove lookup_by_hash(bool is_white, const InputData& in, int variation_seed = 0) const {
+        const auto& target = is_white ? white_hash_book : black_hash_book;
+        std::string h = hash_input_board(in);
+        auto it = target.find(h);
+        if (it == target.end()) return {"", ""};
+        return pick_from_bucket(it->second, variation_seed);
+    }
+
+
 };
 
 
 
 // чтение ответа сервера
-void read_input(InputData& data) {
-    std::string line;
-
+bool read_input(InputData& data) {
     // читаем pong
-    if (!(std::cin >> data.pong)) return;
+    if (!(std::cin >> data.pong)) return false;
 
     // получаем кол-во фигур
-    int n;
-    std::cin >> n;
-    data.count = n;
-
-    // скипаем перенос строки, чтобы не читать его
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); 
+    std::cin >> data.count;
 
     // читаем доску
-    data.figures.resize(n);
-    for (int i = 0; i < n; i++) {
-        std::getline(std::cin, line);
-        // если кривая строка (можно потом удалить?)
-        if (line.size() < 6) continue;
-        data.figures[i].pos.x = line[0];
-        data.figures[i].pos.y = line[1];
-        data.figures[i].color = line[3];
-        data.figures[i].type = static_cast<FigureType>(line[5] - '0'); // переводим в число
+    data.figures.resize(data.count);
+    for (auto& fig : data.figures) {
+        int type = 0;
+        std::cin >> fig.pos.x >> fig.pos.y >> fig.color >> type;
+        fig.type = static_cast<FigureType>(type);
     }
 
-    // клетка взятия на проходе (если она есть)
-    std::getline(std::cin, line);
-    if (line.size() >= 2 && line[0] >= 'a' && line[0] <= 'h' && line[1] >= '1' && line[1] <= '8') {
-        data.ep_square = {line[0], line[1]};
-    } else {
-        data.ep_square = {'\0', '\0'};      // если ее нет
-    }
+    // клетка взятия на проходе
+    std::string ep;
+    std::cin >> ep;
+    data.ep_square = (ep.size() == 2) ? Cell{ep[0], ep[1]} : Cell{};
 
     // рокировка
     // сначала моя, потом врага; a = длинная, h = короткая
     // != '-' => true, == '-' => false
-    std::getline(std::cin, line);
-    std::istringstream iss(line);
     char my_a, my_h, opp_a, opp_h;
-    if (iss >> my_a >> my_h >> opp_a >> opp_h) {
-        data.castling[0] = (my_a != '-');
-        data.castling[1] = (my_h != '-');
-        data.castling[2] = (opp_a != '-');
-        data.castling[3] = (opp_h != '-');
-    }
+    std::cin >> my_a >> my_h >> opp_a >> opp_h;
+    data.castling[0] = (my_a != '-');
+    data.castling[1] = (my_h != '-');
+    data.castling[2] = (opp_a != '-');
+    data.castling[3] = (opp_h != '-');
+    return true;
 }
 
 // дебагер для нас
 void debug(const std::string& msg) {
-    std::cout << "# " << msg << '\n';
+    std::cout << "// " << msg << '\n';
     std::cout.flush();
 }
 
@@ -270,12 +383,13 @@ void output_move(const Cell& from, const Cell& to, int ping) {
 }
 
 // определяем сторону только по первому входному списку фигур:
-// если в самом начале есть '+', то мы белые, иначе черные
+// берем первую '+' фигуру: ряды 1-2 => белые, 7-8 => черные
 bool detect_side(const InputData& in) {
     for (const auto& f : in.figures) {
-        if (f.color == '+') return true;
+        if (f.color != '+') continue;
+        return (f.pos.y == '1' || f.pos.y == '2');
     }
-    return false;
+    return true;
 }
 
 // восстанавливает ход соперника (откуда фигура исчезла и куда появилась)
@@ -342,15 +456,41 @@ private:
     std::string move_history;       // история ходов через '_'
     bool bot_is_white = true;       // сторона изначально считается белой
 
+    // добавляем полуход в историю
+    void append_history(const std::string& ply) {
+        move_history += (move_history.empty() ? "" : "_") + ply;
+    }
+
     // текущий ключ позиции
     std::string make_position_key() const {
         return move_history;
     }
 
+    bool has_piece_at(const InputData& in, char x, char y, char color) const {
+        for (const auto& f : in.figures) {
+            if (f.pos.x == x && f.pos.y == y && f.color == color) return true;
+        }
+        return false;
+    }
+
     // совершаем ход из библиотеки дебютов: откуда -> кудась
-    Move get_opening_move(int variation_seed) {
+    Move get_opening_move(int variation_seed, const InputData& in) {
         std::string key = make_position_key();
-        auto response = opening.lookup(key, variation_seed);
+        OpeningBook::BookMove response =
+            key.empty() ? OpeningBook::BookMove{"", ""} : opening.lookup(bot_is_white, key, variation_seed);
+
+        // если истории еще нет, но мы белые в старте - берем первый ход белых
+        if (response.move.empty() && key.empty() && bot_is_white && has_piece_at(in, 'e', '2', '+')) {
+            // старт белых: первый ход из пустого ключа
+            response = opening.lookup(true, "", variation_seed);
+        }
+
+        // fallback по хэшу позиции (на случай перезапуска и пустой истории)
+        if (response.move.empty()) {
+            response = opening.lookup_by_hash(bot_is_white, in, variation_seed);
+        }
+
+
         const std::string& move = response.move;
         const std::string& opening_name = response.opening;
         if (!move.empty() && move.length() == 4) {
@@ -376,16 +516,16 @@ public:
         // если мы черные и еще нет хода соперника в истории, то пока нечего играть
         if (!bot_is_white && move_history.empty()) return Move();
 
-        Move m = get_opening_move(in.pong);
+        Move m = get_opening_move(in.pong, in);
         // добавляем в историю, если ход валиден
         if (m.valid()) {
-            move_history += (move_history.empty() ? "" : "_") + m.str();
+            append_history(m.str());
         }
         return m;
     }
     // добавляем ход соперника
     void add_opponent_move(const std::string& opp_move) {
-        move_history += (move_history.empty() ? "" : "_") + opp_move;
+        append_history(opp_move);
     }
 };
 
@@ -398,7 +538,7 @@ int main() {
 
     // пока геймим
     while (true) {
-        read_input(in);
+        if (!read_input(in)) break;
 
         // определяем сторону бота один раз
         if (!side_known && in.count > 0) {
@@ -422,7 +562,7 @@ int main() {
         if (best.valid()) {
             output_move(best.from, best.to, next_ping);
         } else {
-            debug("Нет хода по дебюту");
+            debug("Будет реализовано в midgame");
         }
 
         prev = in;          // сохраняем текущую, как предыдущую для следующего
