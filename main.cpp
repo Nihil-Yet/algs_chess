@@ -20,9 +20,9 @@ enum class FigureType {
 const int FIGURE_WEIGHTS[7] = {0, 1, 3, 3, 5, 9, 20000};
 
 // клетка: x - буквы, y - цифарки
-// валидность на то, что мы в пределах доски (пока оставить?)
-// валидность того, что корректный строковый формат (пока оставить?)
-// проверка на то, что это ТОЧНО другая клетка (пока оставить?)
+// валидность на то, что мы в пределах доски ([CHECK] пока оставить?)
+// валидность того, что корректный строковый формат ([CHECK] пока оставить?)
+// проверка на то, что это ТОЧНО другая клетка ([CHECK] пока оставить?)
 struct Cell {
     char x = '\0', y = '\0';
     bool valid() const { return x >= 'a' && x <= 'h' && y >= '1' && y <= '8'; }
@@ -56,6 +56,40 @@ struct Move {
 };
 
 
+
+// библиотека дебютов, епта
+class OpeningBook {
+private:
+    // хэээш :3333
+    // история ходов - ключ; значения - мой готовый ход из библиотеки
+    std::unordered_map<std::string, std::string> book;
+
+public:
+    OpeningBook() { load(); }
+
+    // определение белые мы или черные происходит в начале игры, относительно того где стоит наш '+':
+    // т.е., если в начале - мы белые; если в конце - мы черные
+    // держим две библиотеки для дебютов за белых/черных
+    void load() {
+        // Базовые примеры для белых.
+        //book[""] = "e2e4";
+        //book["e2e4"] = "e7e5";
+        //book["e2e4_e7e5"] = "g1f3";
+        //book["e2e4_e7e5_g1f3_b8c6"] = "f1c4";
+
+        // Пример для черных.
+        // book["e2e4"] = "c7c5";
+    }
+    // имщем ключики
+    std::string lookup(const std::string& position_key) const {
+        auto it = book.find(position_key);                  // хэшируем, ищем совпадение ключей
+        return (it != book.end()) ? it->second : "";        // вовзаращаем ход, если ключ найден, иначе пустую строку ([CHECK] потом исправить не на путсую?)
+    }
+};
+
+
+
+// чтение ответа сервера
 void read_input(InputData& data) {
     std::string line;
 
@@ -116,30 +150,7 @@ void output_move(const Cell& from, const Cell& to, int ping) {
     std::cout.flush();
 }
 
-class OpeningBook {
-private:
-    // Ключ позиции -> ход в формате "e2e4".
-    std::unordered_map<std::string, std::string> book;
 
-public:
-    OpeningBook() { load(); }
-
-    void load() {
-        // Базовые примеры для белых.
-        book[""] = "e2e4";
-        book["e2e4"] = "e7e5";
-        book["e2e4_e7e5"] = "g1f3";
-        book["e2e4_e7e5_g1f3_b8c6"] = "f1c4";
-
-        // Пример для черных.
-        // book["e2e4"] = "c7c5";
-    }
-
-    std::string lookup(const std::string& position_key) const {
-        auto it = book.find(position_key);
-        return (it != book.end()) ? it->second : "";
-    }
-};
 
 class ChessBot {
 private:
