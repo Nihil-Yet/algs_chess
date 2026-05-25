@@ -269,12 +269,78 @@ void output_move(const Cell& from, const Cell& to, int ping) {
     std::cout.flush();
 }
 
+// определяем сторону только по первому входному списку фигур:
+// если в самом начале есть '+', то мы белые, иначе черные
+bool detect_side(const InputData& in) {
+    for (const auto& f : in.figures) {
+        if (f.color == '+') return true;
+    }
+    return false;
+}
+
+// восстанавливает ход соперника (откуда фигура исчезла и куда появилась)
+std::string figure_key(const Figure& f) {
+    return std::string(1, f.pos.x) + f.pos.y;
+}
+
+// восстановления хода соперника, ищем откуда ушла фигура и куда пришла
+std::string infer_opponent_move(const InputData& prev, const InputData& curr) {
+    std::unordered_map<std::string, FigureType> prev_opp;       // предыдущий снимок доски
+    std::unordered_map<std::string, FigureType> curr_opp;       // текущий снимок доски
+
+    // заполняем предыдущим
+    for (const auto& f : prev.figures) {
+        if (f.color == '-') prev_opp[figure_key(f)] = f.type;
+    }
+    // заполняем текущим
+    for (const auto& f : curr.figures) {
+        if (f.color == '-') curr_opp[figure_key(f)] = f.type;
+    }
+
+    std::vector<std::string> from_opp;      // от
+    std::vector<std::string> to_opp;        // до
+
+    // откуда ушли
+    for (const auto& it : prev_opp) {
+        if (curr_opp.find(it.first) == curr_opp.end()) {
+            from_opp.push_back(it.first);
+        }
+    }
+    // куда пришли
+    for (const auto& it : curr_opp) {
+        if (prev_opp.find(it.first) == prev_opp.end()) {
+            to_opp.push_back(it.first);
+        }
+    }
+
+    // обычный ход, не рокировка
+    if (from_opp.size() == 1 && to_opp.size() == 1) {
+        return from_opp[0] + to_opp[0];
+    }
+
+    // рокировка соперника - либо длинная, либо короткая
+    // откуда исчезли фигуры
+    for (const auto& from : from_opp) {
+        if (from != "e1" && from != "e8") continue;     // варианты только с e1 по e8
+        // где фигуры появились
+        for (const auto& to : to_opp) {
+            // рокировочные места
+            if (to == "g1" || to == "c1" || to == "g8" || to == "c8") {
+                return from + to;       // ход короля, ладью не записываем
+            }
+        }
+    }
+
+    return "";
+}
+
 
 
 class ChessBot {
 private:
     OpeningBook opening;            // библиотека дебютов
     std::string move_history;       // история ходов через '_'
+    bool bot_is_white = true;       // сторона изначально считается белой
 
     // текущий ключ позиции
     std::string make_position_key() const {
@@ -301,8 +367,15 @@ private:
 public:
     // конструктор по умолчанию
     ChessBot() = default;
+    // устанавливаем сторону
+    void set_side(bool is_white) {
+        bot_is_white = is_white;
+    }
     // совершает ход 
     Move get_move(const InputData& in) {
+        // если мы черные и еще нет хода соперника в истории, то пока нечего играть
+        if (!bot_is_white && move_history.empty()) return Move();
+
         Move m = get_opening_move(in.pong);
         // добавляем в историю, если ход валиден
         if (m.valid()) {
@@ -319,10 +392,30 @@ public:
 int main() {
     ChessBot bot;       // создаем ботика
     InputData in;       // данные от сервера
+    InputData prev;     // предыдущий кадр доски, чтобы понять ход соперника
+    bool has_prev = false;
+    bool side_known = false;
 
     // пока геймим
     while (true) {
         read_input(in);
+
+        // определяем сторону бота один раз
+        if (!side_known && in.count > 0) {
+            bool is_white = detect_side(in);
+            bot.set_side(is_white);
+            side_known = true;
+            debug(std::string("Сторона бота: ") + (is_white ? "white" : "black"));
+        }
+
+        // добавляем ход соперника в историю
+        if (has_prev) {
+            std::string opp = infer_opponent_move(prev, in);
+            if (!opp.empty()) {
+                bot.add_opponent_move(opp);
+                debug("Ход соперника: " + opp);
+            }
+        }
 
         Move best = bot.get_move(in);                       // лучший ход бота ([CHECK] пока только дебюты)
         int next_ping = (in.pong<=0) ? 1 : (in.pong+1);     // увеличиваем по кд ping на 1
@@ -331,6 +424,9 @@ int main() {
         } else {
             debug("Нет хода по дебюту");
         }
+
+        prev = in;          // сохраняем текущую, как предыдущую для следующего
+        has_prev = true;    // есть предыдущий
     }
 
     return 0;
