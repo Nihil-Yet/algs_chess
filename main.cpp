@@ -46,6 +46,16 @@ struct InputData {
     bool castling[4] = {false, false, false, false};    // (длин мая, кор мая, длин немая, кор немая)
 };
 
+// наш ход: откуда и куда 
+// преобразование в строку
+// проверка шо значения по шахматной доске
+struct Move {
+    Cell from, to;
+    std::string str() const { return from.str() + to.str(); }
+    bool valid() const { return from.valid() && to.valid(); }
+};
+
+
 void read_input(InputData& data) {
     std::string line;
 
@@ -94,22 +104,17 @@ void read_input(InputData& data) {
     }
 }
 
+// дебагер для нас
 void debug(const std::string& msg) {
     std::cout << "# " << msg << '\n';
     std::cout.flush();
 }
 
+// отправляем ход серверу: клеткачисло, пробел и пинг с переходом на новую строку
 void output_move(const Cell& from, const Cell& to, int ping) {
     std::cout << from.x << from.y << to.x << to.y << ' ' << ping << '\n';
     std::cout.flush();
 }
-
-struct Move {
-    Cell from, to;
-
-    std::string str() const { return from.str() + to.str(); }
-    bool valid() const { return from.valid() && to.valid(); }
-};
 
 class OpeningBook {
 private:
