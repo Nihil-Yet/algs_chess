@@ -591,6 +591,43 @@ std::vector<Move> generate_all_our_moves(const InputData& in) {
     return all;
 }
 
+// вес фигуры по типу (удобно для оценки взятий)
+int piece_weight(FigureType t) {
+    return FIGURE_WEIGHTS[static_cast<int>(t)];
+}
+
+// фигура на клетке (если есть)
+const Figure* find_figure_at(const InputData& in, char x, char y) {
+    for (const auto& f : in.figures) {
+        if (f.pos.x == x && f.pos.y == y) return &f;
+    }
+    return nullptr;
+}
+
+// простенькая оценка хода для мидгейма ([CHECK] потом заменим на норм поиск)
+int score_move_simple(const InputData& in, const Move& m) {
+    int score = 0;
+
+    // если бьем фигуру, то плюс к оценке
+    const Figure* captured = find_figure_at(in, m.to.x, m.to.y);
+    if (captured && captured->color == '-') {
+        score += piece_weight(captured->type) * 100;
+    }
+
+    // центр (d4/e4/d5/e5)
+    if ((m.to.x == 'd' || m.to.x == 'e') && (m.to.y == '4' || m.to.y == '5')) {
+        score += 10;
+    }
+
+    // маленький бонус за продвижение пешки
+    const Figure* mover = find_figure_at(in, m.from.x, m.from.y);
+    if (mover && mover->type == FigureType::PAWN) {
+        score += 2;
+    }
+
+    return score;
+}
+
 
 
 class ChessBot {
@@ -647,6 +684,25 @@ private:
         return Move();
     }
 
+    // если библиотеки не нашли ход - берем лучший по простой оценке
+    Move get_midgame_move_simple(const InputData& in) {
+        auto moves = generate_all_our_moves(in); // все наши псевдолегальные
+        if (moves.empty()) return Move();
+
+        Move best = moves[0];
+        int best_score = score_move_simple(in, best);
+        for (std::size_t i = 1; i < moves.size(); i++) {
+            int s = score_move_simple(in, moves[i]);
+            if (s > best_score) {
+                best_score = s;
+                best = moves[i];
+            }
+        }
+
+        debug("Midgame(simple): ходов=" + std::to_string(moves.size()) + ", score=" + std::to_string(best_score));
+        return best;
+    }
+
 public:
     // конструктор по умолчанию
     ChessBot() = default;
@@ -660,6 +716,9 @@ public:
         if (!bot_is_white && move_history.empty()) return Move();
 
         Move m = get_opening_move(in.pong, in);
+        if (!m.valid()) {
+            m = get_midgame_move_simple(in); // [CHECK!] пока без alpha-beta
+        }
         // добавляем в историю, если ход валиден
         if (m.valid()) {
             append_history(m.str());
