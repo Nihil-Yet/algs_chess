@@ -448,6 +448,149 @@ std::string infer_opponent_move(const InputData& prev, const InputData& curr) {
     return "";
 }
 
+// карта доски для мидгейма: ячейка - цвет, тип
+using BoardMap = std::map<std::string, std::pair<char, FigureType>>;
+
+// собрали карту из входных фигур
+BoardMap make_board_map(const InputData& in) {
+    BoardMap b;
+    for (const auto& f : in.figures) {
+        b[f.pos.str()] = {f.color, f.type};
+    }
+    return b;
+}
+
+// клетка внутри доски?
+bool on_board(char x, char y) {
+    return x >= 'a' && x <= 'h' && y >= '1' && y <= '8';
+}
+
+// есть ли фигура на клетке?
+bool has_piece(const BoardMap& b, char x, char y) {
+    std::string sq; sq += x; sq += y;
+    return b.find(sq) != b.end();
+}
+
+// цвет фигуры на клетке
+char piece_color(const BoardMap& b, char x, char y) {
+    std::string sq; sq += x; sq += y;
+    auto it = b.find(sq);
+    return (it == b.end()) ? '\0' : it->second.first;
+}
+
+// добавляем ход, если клетка пустая/вражеская
+void add_if_can_go(const BoardMap& b, std::vector<Move>& out, const Cell& from, char tx, char ty, char my_color) {
+    if (!on_board(tx, ty)) return;
+    char c = piece_color(b, tx, ty);
+    if (c == my_color) return;               // свою бить нельзя
+    out.push_back({from, {tx, ty}});         // пусто или враг - можно
+}
+
+// ходы коня (буква Г)
+void gen_knight_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from, char my_color) {
+    static const int dx[8] = {1, 2, 2, 1, -1, -2, -2, -1};
+    static const int dy[8] = {2, 1, -1, -2, -2, -1, 1, 2};
+    for (int i = 0; i < 8; i++) {
+        add_if_can_go(b, out, from, static_cast<char>(from.x + dx[i]), static_cast<char>(from.y + dy[i]), my_color);
+    }
+}
+
+// ходы короля (на 1 клетку вокруг, [CHECK] пока без рокировки)
+void gen_king_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from, char my_color) {
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            if (dx == 0 && dy == 0) continue;
+            add_if_can_go(b, out, from, static_cast<char>(from.x + dx), static_cast<char>(from.y + dy), my_color);
+        }
+    }
+}
+
+// слон/ладья/ферзь
+void gen_slider_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from, char my_color, const std::vector<std::pair<int, int>>& dirs) {
+    for (const auto& d : dirs) {
+        char x = from.x;
+        char y = from.y;
+        while (true) {
+            x = static_cast<char>(x + d.first);
+            y = static_cast<char>(y + d.second);
+            if (!on_board(x, y)) break;
+            char c = piece_color(b, x, y);
+            if (c == my_color) break;           // уперлись в свою
+            out.push_back({from, {x, y}});      // пусто или взятие
+            if (c != '\0') break;               // после взятия дальше нельзя
+        }
+    }
+}
+
+// ходы пешки
+void gen_pawn_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from, char my_color, const Cell& ep_square) {
+    int dir = (my_color == '+') ? 1 : -1;          // '+' идет вверх по y
+    char one_y = static_cast<char>(from.y + dir);
+    char two_y = static_cast<char>(from.y + 2 * dir);
+    char start_y = (my_color == '+') ? '2' : '7';
+    char enemy_color = (my_color == '+') ? '-' : '+';
+
+    // шаг на 1
+    if (on_board(from.x, one_y) && !has_piece(b, from.x, one_y)) {
+        out.push_back({from, {from.x, one_y}});
+        // шаг на 2 со старта
+        if (from.y == start_y && on_board(from.x, two_y) && !has_piece(b, from.x, two_y)) {
+            out.push_back({from, {from.x, two_y}});
+        }
+    }
+
+    // взятия по диагонали
+    for (int dx : {-1, 1}) {
+        char tx = static_cast<char>(from.x + dx);
+        char ty = one_y;
+        if (!on_board(tx, ty)) continue;
+        if (piece_color(b, tx, ty) == enemy_color) {
+            out.push_back({from, {tx, ty}});
+        }
+    }
+
+    // взятие на проходе
+    if (ep_square.valid()) {
+        if (one_y == ep_square.y && (from.x + 1 == ep_square.x || from.x - 1 == ep_square.x)) {
+            out.push_back({from, ep_square});
+        }
+    }
+}
+
+// ходы одной фигуры по ее типу
+std::vector<Move> generate_piece_moves(const Figure& f, const BoardMap& b, const InputData& in) {
+    std::vector<Move> out;
+    if (!f.pos.valid()) return out;
+
+    if (f.type == FigureType::PAWN) {
+        gen_pawn_moves(b, out, f.pos, f.color, in.ep_square);
+    } else if (f.type == FigureType::KNIGHT) {
+        gen_knight_moves(b, out, f.pos, f.color);
+    } else if (f.type == FigureType::BISHOP) {
+        gen_slider_moves(b, out, f.pos, f.color, {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}});
+    } else if (f.type == FigureType::ROOK) {
+        gen_slider_moves(b, out, f.pos, f.color, {{1, 0}, {-1, 0}, {0, 1}, {0, -1}});
+    } else if (f.type == FigureType::QUEEN) {
+        gen_slider_moves(b, out, f.pos, f.color, {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}});
+    } else if (f.type == FigureType::KING) {
+        gen_king_moves(b, out, f.pos, f.color);
+    }
+    return out;
+}
+
+// все наши псевдолегальные ходы ([CHECK] без проверки "король под шахом")
+std::vector<Move> generate_all_our_moves(const InputData& in) {
+    std::vector<Move> all;
+    BoardMap b = make_board_map(in);
+
+    for (const auto& f : in.figures) {
+        if (f.color != '+') continue;
+        auto one = generate_piece_moves(f, b, in);
+        all.insert(all.end(), one.begin(), one.end());
+    }
+    return all;
+}
+
 
 
 class ChessBot {
