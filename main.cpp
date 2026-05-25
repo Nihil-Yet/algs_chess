@@ -49,39 +49,48 @@ struct InputData {
 void read_input(InputData& data) {
     std::string line;
 
+    // читаем pong
     if (!(std::cin >> data.pong)) return;
+
+    // получаем кол-во фигур
     int n;
     std::cin >> n;
     data.count = n;
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
+    // скипаем перенос строки, чтобы не читать его
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); 
+
+    // читаем доску
     data.figures.resize(n);
     for (int i = 0; i < n; i++) {
         std::getline(std::cin, line);
+        // если кривая строка (можно потом удалить?)
         if (line.size() < 6) continue;
         data.figures[i].pos.x = line[0];
         data.figures[i].pos.y = line[1];
         data.figures[i].color = line[3];
-        data.figures[i].type = static_cast<FigureType>(line[5] - '0');
+        data.figures[i].type = static_cast<FigureType>(line[5] - '0'); // переводим в число
     }
 
-    // EP-клетка: либо координата, либо маркер отсутствия.
+    // клетка взятия на проходе (если она есть)
     std::getline(std::cin, line);
     if (line.size() >= 2 && line[0] >= 'a' && line[0] <= 'h' && line[1] >= '1' && line[1] <= '8') {
         data.ep_square = {line[0], line[1]};
     } else {
-        data.ep_square = {'\0', '\0'};
+        data.ep_square = {'\0', '\0'};      // если ее нет
     }
 
-    // Права рокировки: 4 токена (своя короткая/длинная, чужая короткая/длинная).
+    // рокировка
+    // сначала моя, потом врага; a = длинная, h = короткая
+    // != '-' => true, == '-' => false
     std::getline(std::cin, line);
     std::istringstream iss(line);
-    char ws, wl, bs, bl;
-    if (iss >> ws >> wl >> bs >> bl) {
-        data.castling[0] = (ws != '-');
-        data.castling[1] = (wl != '-');
-        data.castling[2] = (bs != '-');
-        data.castling[3] = (bl != '-');
+    char my_a, my_h, opp_a, opp_h;
+    if (iss >> my_a >> my_h >> opp_a >> opp_h) {
+        data.castling[0] = (my_a != '-');
+        data.castling[1] = (my_h != '-');
+        data.castling[2] = (opp_a != '-');
+        data.castling[3] = (opp_h != '-');
     }
 }
 
