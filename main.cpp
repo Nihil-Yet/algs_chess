@@ -478,6 +478,94 @@ char piece_color(const BoardMap& b, char x, char y) {
     return (it == b.end()) ? '\0' : it->second.first;
 }
 
+// тип фигуры на клетке (если пусто - вернем пешку как заглушку)
+FigureType piece_type(const BoardMap& b, char x, char y) {
+    std::string sq; sq += x; sq += y;
+    auto it = b.find(sq);
+    return (it == b.end()) ? FigureType::PAWN : it->second.second;
+}
+
+// пытаемся понять направление пешек по стороне короля
+int pawn_dir_for_color(const BoardMap& b, char color) {
+    for (const auto& it : b) {
+        if (it.second.first == color && it.second.second == FigureType::KING) {
+            return (it.first[1] <= '4') ? 1 : -1;
+        }
+    }
+    return (color == '+') ? 1 : -1;
+}
+
+// бьется ли клетка фигурами нужного цвета
+bool is_square_attacked(const BoardMap& b, char tx, char ty, char by_color) {
+    int pawn_dir = pawn_dir_for_color(b, by_color);
+    int pawn_from_step = -pawn_dir;
+
+    // пешки
+    for (int dx : {-1, 1}) {
+        char px = static_cast<char>(tx + dx);
+        char py = static_cast<char>(ty + pawn_from_step);
+        if (!on_board(px, py)) continue;
+        if (piece_color(b, px, py) == by_color && piece_type(b, px, py) == FigureType::PAWN) return true;
+    }
+
+    // кони
+    static const int ndx[8] = {1, 2, 2, 1, -1, -2, -2, -1};
+    static const int ndy[8] = {2, 1, -1, -2, -2, -1, 1, 2};
+    for (int i = 0; i < 8; i++) {
+        char x = static_cast<char>(tx + ndx[i]);
+        char y = static_cast<char>(ty + ndy[i]);
+        if (!on_board(x, y)) continue;
+        if (piece_color(b, x, y) == by_color && piece_type(b, x, y) == FigureType::KNIGHT) return true;
+    }
+
+    // король рядом
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            if (dx == 0 && dy == 0) continue;
+            char x = static_cast<char>(tx + dx);
+            char y = static_cast<char>(ty + dy);
+            if (!on_board(x, y)) continue;
+            if (piece_color(b, x, y) == by_color && piece_type(b, x, y) == FigureType::KING) return true;
+        }
+    }
+
+    // диагонали: слон/ферзь
+    for (auto d : std::vector<std::pair<int, int>>{{1, 1}, {1, -1}, {-1, 1}, {-1, -1}}) {
+        char x = tx, y = ty;
+        while (true) {
+            x = static_cast<char>(x + d.first);
+            y = static_cast<char>(y + d.second);
+            if (!on_board(x, y)) break;
+            char c = piece_color(b, x, y);
+            if (c == '\0') continue;
+            if (c == by_color) {
+                FigureType t = piece_type(b, x, y);
+                if (t == FigureType::BISHOP || t == FigureType::QUEEN) return true;
+            }
+            break;
+        }
+    }
+
+    // прямые: ладья/ферзь
+    for (auto d : std::vector<std::pair<int, int>>{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+        char x = tx, y = ty;
+        while (true) {
+            x = static_cast<char>(x + d.first);
+            y = static_cast<char>(y + d.second);
+            if (!on_board(x, y)) break;
+            char c = piece_color(b, x, y);
+            if (c == '\0') continue;
+            if (c == by_color) {
+                FigureType t = piece_type(b, x, y);
+                if (t == FigureType::ROOK || t == FigureType::QUEEN) return true;
+            }
+            break;
+        }
+    }
+
+    return false;
+}
+
 // добавляем ход, если клетка пустая/вражеская
 void add_if_can_go(const BoardMap& b, std::vector<Move>& out, const Cell& from, char tx, char ty, char my_color) {
     if (!on_board(tx, ty)) return;
@@ -495,12 +583,42 @@ void gen_knight_moves(const BoardMap& b, std::vector<Move>& out, const Cell& fro
     }
 }
 
-// ходы короля (на 1 клетку вокруг, [CHECK] пока без рокировки)
-void gen_king_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from, char my_color) {
+// ходы короля (на 1 клетку + рокировка)
+void gen_king_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from, char my_color, const bool castling[4]) {
     for (int dx = -1; dx <= 1; dx++) {
         for (int dy = -1; dy <= 1; dy++) {
             if (dx == 0 && dy == 0) continue;
             add_if_can_go(b, out, from, static_cast<char>(from.x + dx), static_cast<char>(from.y + dy), my_color);
+        }
+    }
+
+    bool can_long = castling[0];
+    bool can_short = castling[1];
+    char enemy = (my_color == '+') ? '-' : '+';
+
+    // длинная рокировка: e -> c
+    if (can_long && from.x == 'e') {
+        char y = from.y;
+        if (!has_piece(b, 'd', y) && !has_piece(b, 'c', y) && !has_piece(b, 'b', y) &&
+            piece_color(b, 'a', y) == my_color && piece_type(b, 'a', y) == FigureType::ROOK) {
+            if (!is_square_attacked(b, 'e', y, enemy) &&
+                !is_square_attacked(b, 'd', y, enemy) &&
+                !is_square_attacked(b, 'c', y, enemy)) {
+                out.push_back({from, {'c', y}});
+            }
+        }
+    }
+
+    // короткая рокировка: e -> g
+    if (can_short && from.x == 'e') {
+        char y = from.y;
+        if (!has_piece(b, 'f', y) && !has_piece(b, 'g', y) &&
+            piece_color(b, 'h', y) == my_color && piece_type(b, 'h', y) == FigureType::ROOK) {
+            if (!is_square_attacked(b, 'e', y, enemy) &&
+                !is_square_attacked(b, 'f', y, enemy) &&
+                !is_square_attacked(b, 'g', y, enemy)) {
+                out.push_back({from, {'g', y}});
+            }
         }
     }
 }
@@ -524,7 +642,7 @@ void gen_slider_moves(const BoardMap& b, std::vector<Move>& out, const Cell& fro
 
 // ходы пешки
 void gen_pawn_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from, char my_color, const Cell& ep_square) {
-    int dir = (my_color == '+') ? 1 : -1;          // '+' идет вверх по y
+    int dir = pawn_dir_for_color(b, my_color);
     char one_y = static_cast<char>(from.y + dir);
     char two_y = static_cast<char>(from.y + 2 * dir);
     char start_y = (my_color == '+') ? '2' : '7';
@@ -573,7 +691,7 @@ std::vector<Move> generate_piece_moves(const Figure& f, const BoardMap& b, const
     } else if (f.type == FigureType::QUEEN) {
         gen_slider_moves(b, out, f.pos, f.color, {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}});
     } else if (f.type == FigureType::KING) {
-        gen_king_moves(b, out, f.pos, f.color);
+        gen_king_moves(b, out, f.pos, f.color, in.castling);
     }
     return out;
 }
@@ -589,6 +707,86 @@ std::vector<Move> generate_all_our_moves(const InputData& in) {
         all.insert(all.end(), one.begin(), one.end());
     }
     return all;
+}
+
+// применяем ход на копии доски (надо для фильтра легальности)
+BoardMap apply_move_copy(const BoardMap& b, const Move& m) {
+    BoardMap nb = b;
+    std::string from = m.from.str();
+    std::string to = m.to.str();
+    auto it = nb.find(from);
+    if (it == nb.end()) return nb;
+
+    char mover_color = it->second.first;
+    FigureType mover_type = it->second.second;
+
+    // en passant: пешка по диагонали на пустую клетку
+    if (mover_type == FigureType::PAWN && m.from.x != m.to.x && nb.find(to) == nb.end()) {
+        int dir = pawn_dir_for_color(nb, mover_color);
+        char cap_y = static_cast<char>(m.to.y - dir);
+        std::string cap_sq; cap_sq += m.to.x; cap_sq += cap_y;
+        nb.erase(cap_sq);
+    }
+
+    // рокировка: двигаем ладью
+    if (mover_type == FigureType::KING && m.from.x == 'e' && (m.to.x == 'g' || m.to.x == 'c')) {
+        if (m.to.x == 'g') {
+            std::string rook_from = std::string("h") + m.from.y;
+            std::string rook_to = std::string("f") + m.from.y;
+            auto rt = nb.find(rook_from);
+            if (rt != nb.end()) {
+                auto rook_piece = rt->second;
+                nb.erase(rt);
+                nb[rook_to] = rook_piece;
+            }
+        } else {
+            std::string rook_from = std::string("a") + m.from.y;
+            std::string rook_to = std::string("d") + m.from.y;
+            auto rt = nb.find(rook_from);
+            if (rt != nb.end()) {
+                auto rook_piece = rt->second;
+                nb.erase(rt);
+                nb[rook_to] = rook_piece;
+            }
+        }
+    }
+
+    auto piece = it->second;
+    nb.erase(it);
+    nb[to] = piece;
+    return nb;
+}
+
+// где стоит наш король
+Cell find_king_cell(const BoardMap& b, char my_color) {
+    for (const auto& it : b) {
+        if (it.second.first == my_color && it.second.second == FigureType::KING) {
+            return {it.first[0], it.first[1]};
+        }
+    }
+    return {};
+}
+
+// фильтр легальности: после хода наш король не под шахом
+std::vector<Move> filter_legal_moves(const InputData& in, const std::vector<Move>& pseudo) {
+    std::vector<Move> legal;
+    BoardMap b = make_board_map(in);
+
+    for (const auto& m : pseudo) {
+        BoardMap nb = apply_move_copy(b, m);
+        Cell king = find_king_cell(nb, '+');
+        if (!king.valid()) continue;
+        if (!is_square_attacked(nb, king.x, king.y, '-')) {
+            legal.push_back(m);
+        }
+    }
+    return legal;
+}
+
+// все наши легальные ходы
+std::vector<Move> generate_all_our_legal_moves(const InputData& in) {
+    auto pseudo = generate_all_our_moves(in);
+    return filter_legal_moves(in, pseudo);
 }
 
 // вес фигуры по типу (удобно для оценки взятий)
@@ -628,7 +826,12 @@ int score_move_simple(const InputData& in, const Move& m) {
     return score;
 }
 
-
+// пешка на 1/8 не должна идти [CHECK!!!]
+bool is_pawn_promotion_move(const InputData& in, const Move& m) {
+    const Figure* mover = find_figure_at(in, m.from.x, m.from.y);
+    if (!mover || mover->type != FigureType::PAWN) return false;
+    return (m.to.y == '1' || m.to.y == '8');
+}
 
 class ChessBot {
 private:
@@ -686,7 +889,12 @@ private:
 
     // если библиотеки не нашли ход - берем лучший по простой оценке
     Move get_midgame_move_simple(const InputData& in) {
-        auto moves = generate_all_our_moves(in); // все наши псевдолегальные
+        auto legal_moves = generate_all_our_legal_moves(in); // тут уже легальные
+        std::vector<Move> moves;
+        moves.reserve(legal_moves.size());
+        for (const auto& m : legal_moves) {
+            if (!is_pawn_promotion_move(in, m)) moves.push_back(m);
+        }
         if (moves.empty()) return Move();
 
         Move best = moves[0];
