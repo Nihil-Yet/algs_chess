@@ -5,6 +5,8 @@
 #include <unordered_map>
 #include <map>
 #include <cstddef>
+#include <chrono>
+#include <algorithm>
 
 // тип фигур
 enum class FigureType {
@@ -19,6 +21,7 @@ enum class FigureType {
 // вес фигур (заглушка, пешка, конь, слон, ладья, королева, король)
 // 0 нужен как заглушка, чтобы было удобно обращаться к переменной с типом фигур
 const int FIGURE_WEIGHTS[7] = {0, 1, 3, 3, 5, 9, 20000};
+bool G_BOT_IS_WHITE = true; // сторона бота для направления пешек
 
 // клетка: x - буквы, y - цифарки
 // валидность на то, что мы в пределах доски ([CHECK] пока оставить?)
@@ -356,7 +359,7 @@ bool read_input(InputData& data) {
     // клетка взятия на проходе
     std::string ep;
     std::cin >> ep;
-    data.ep_square = (ep.size() == 2) ? Cell{ep[0], ep[1]} : Cell{};
+    data.ep_square = {ep[0], ep[1]};
 
     // рокировка
     // сначала моя, потом врага; a = длинная, h = короткая
@@ -376,6 +379,35 @@ void debug(const std::string& msg) {
     std::cout.flush();
 }
 
+// дебаг пешек: считаем и печатаем расстановку
+std::string pawn_layout_debug(const InputData& in) {
+    std::vector<std::string> plus_pawns;
+    std::vector<std::string> minus_pawns;
+
+    for (const auto& f : in.figures) {
+        if (f.type != FigureType::PAWN) continue;
+        std::string sq = f.pos.str();
+        if (f.color == '+') plus_pawns.push_back(sq);
+        else minus_pawns.push_back(sq);
+    }
+
+    std::sort(plus_pawns.begin(), plus_pawns.end());
+    std::sort(minus_pawns.begin(), minus_pawns.end());
+
+    std::string out = "Pawns: += " + std::to_string(plus_pawns.size()) + " [";
+    for (std::size_t i = 0; i < plus_pawns.size(); i++) {
+        if (i) out += " ";
+        out += plus_pawns[i];
+    }
+    out += "], -= " + std::to_string(minus_pawns.size()) + " [";
+    for (std::size_t i = 0; i < minus_pawns.size(); i++) {
+        if (i) out += " ";
+        out += minus_pawns[i];
+    }
+    out += "]";
+    return out;
+}
+
 // отправляем ход серверу: клеткачисло, пробел и пинг с переходом на новую строку
 void output_move(const Cell& from, const Cell& to, int ping) {
     std::cout << from.x << from.y << to.x << to.y << ' ' << ping << '\n';
@@ -383,12 +415,30 @@ void output_move(const Cell& from, const Cell& to, int ping) {
 }
 
 // определяем сторону только по первому входному списку фигур:
-// берем первую '+' фигуру: ряды 1-2 => белые, 7-8 => черные
+// сначала пробуем по пешкам, потом fallback по королю
 bool detect_side(const InputData& in) {
+    int plus_pawn_sum = 0, plus_pawn_cnt = 0;
+    int minus_pawn_sum = 0, minus_pawn_cnt = 0;
+
     for (const auto& f : in.figures) {
-        if (f.color != '+') continue;
-        return (f.pos.y == '1' || f.pos.y == '2');
+        if (f.type != FigureType::PAWN) continue;
+        int ry = f.pos.y - '0';
+        if (f.color == '+') { plus_pawn_sum += ry; plus_pawn_cnt++; }
+        else { minus_pawn_sum += ry; minus_pawn_cnt++; }
     }
+
+    // у белых обычно наши пешки "ниже" в координатах, чем вражеские
+    if (plus_pawn_cnt > 0 && minus_pawn_cnt > 0) {
+        return (plus_pawn_sum * minus_pawn_cnt) < (minus_pawn_sum * plus_pawn_cnt);
+    }
+
+    // fallback по королю
+    for (const auto& f : in.figures) {
+        if (f.color == '+' && f.type == FigureType::KING) {
+            return (f.pos.y <= '4');
+        }
+    }
+
     return true;
 }
 
@@ -485,14 +535,11 @@ FigureType piece_type(const BoardMap& b, char x, char y) {
     return (it == b.end()) ? FigureType::PAWN : it->second.second;
 }
 
-// пытаемся понять направление пешек по стороне короля
+// направление пешек по стороне бота (а не по позиции короля)
 int pawn_dir_for_color(const BoardMap& b, char color) {
-    for (const auto& it : b) {
-        if (it.second.first == color && it.second.second == FigureType::KING) {
-            return (it.first[1] <= '4') ? 1 : -1;
-        }
-    }
-    return (color == '+') ? 1 : -1;
+    (void)b;
+    if (color == '+') return G_BOT_IS_WHITE ? 1 : -1;
+    return G_BOT_IS_WHITE ? -1 : 1;
 }
 
 // бьется ли клетка фигурами нужного цвета
@@ -584,7 +631,7 @@ void gen_knight_moves(const BoardMap& b, std::vector<Move>& out, const Cell& fro
 }
 
 // ходы короля (на 1 клетку + рокировка)
-void gen_king_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from, char my_color, const bool castling[4]) {
+void gen_king_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from, char my_color, bool can_long, bool can_short) {
     for (int dx = -1; dx <= 1; dx++) {
         for (int dy = -1; dy <= 1; dy++) {
             if (dx == 0 && dy == 0) continue;
@@ -592,8 +639,6 @@ void gen_king_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from,
         }
     }
 
-    bool can_long = castling[0];
-    bool can_short = castling[1];
     char enemy = (my_color == '+') ? '-' : '+';
 
     // длинная рокировка: e -> c
@@ -678,7 +723,6 @@ void gen_pawn_moves(const BoardMap& b, std::vector<Move>& out, const Cell& from,
 // ходы одной фигуры по ее типу
 std::vector<Move> generate_piece_moves(const Figure& f, const BoardMap& b, const InputData& in) {
     std::vector<Move> out;
-    if (!f.pos.valid()) return out;
 
     if (f.type == FigureType::PAWN) {
         gen_pawn_moves(b, out, f.pos, f.color, in.ep_square);
@@ -691,22 +735,11 @@ std::vector<Move> generate_piece_moves(const Figure& f, const BoardMap& b, const
     } else if (f.type == FigureType::QUEEN) {
         gen_slider_moves(b, out, f.pos, f.color, {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}});
     } else if (f.type == FigureType::KING) {
-        gen_king_moves(b, out, f.pos, f.color, in.castling);
+        bool can_long = (f.color == '+') ? in.castling[0] : in.castling[2];
+        bool can_short = (f.color == '+') ? in.castling[1] : in.castling[3];
+        gen_king_moves(b, out, f.pos, f.color, can_long, can_short);
     }
     return out;
-}
-
-// все наши псевдолегальные ходы ([CHECK] без проверки "король под шахом")
-std::vector<Move> generate_all_our_moves(const InputData& in) {
-    std::vector<Move> all;
-    BoardMap b = make_board_map(in);
-
-    for (const auto& f : in.figures) {
-        if (f.color != '+') continue;
-        auto one = generate_piece_moves(f, b, in);
-        all.insert(all.end(), one.begin(), one.end());
-    }
-    return all;
 }
 
 // применяем ход на копии доски (надо для фильтра легальности)
@@ -767,31 +800,66 @@ Cell find_king_cell(const BoardMap& b, char my_color) {
     return {};
 }
 
-// фильтр легальности: после хода наш король не под шахом
-std::vector<Move> filter_legal_moves(const InputData& in, const std::vector<Move>& pseudo) {
+// все псевдолегальные ходы нужного цвета
+std::vector<Move> generate_all_moves_color(const InputData& in, char color) {
+    std::vector<Move> all;
+    BoardMap b = make_board_map(in);
+    for (const auto& f : in.figures) {
+        if (f.color != color) continue;
+        auto one = generate_piece_moves(f, b, in);
+        all.insert(all.end(), one.begin(), one.end());
+    }
+    return all;
+}
+
+// фильтр легальности для любого цвета
+std::vector<Move> filter_legal_moves_color(const InputData& in, const std::vector<Move>& pseudo, char color) {
     std::vector<Move> legal;
     BoardMap b = make_board_map(in);
-
+    char enemy = (color == '+') ? '-' : '+';
     for (const auto& m : pseudo) {
         BoardMap nb = apply_move_copy(b, m);
-        Cell king = find_king_cell(nb, '+');
+        Cell king = find_king_cell(nb, color);
         if (!king.valid()) continue;
-        if (!is_square_attacked(nb, king.x, king.y, '-')) {
-            legal.push_back(m);
-        }
+        if (!is_square_attacked(nb, king.x, king.y, enemy)) legal.push_back(m);
     }
     return legal;
 }
 
-// все наши легальные ходы
-std::vector<Move> generate_all_our_legal_moves(const InputData& in) {
-    auto pseudo = generate_all_our_moves(in);
-    return filter_legal_moves(in, pseudo);
+std::vector<Move> generate_all_legal_moves_color(const InputData& in, char color) {
+    auto pseudo = generate_all_moves_color(in, color);
+    return filter_legal_moves_color(in, pseudo, color);
 }
 
 // вес фигуры по типу (удобно для оценки взятий)
 int piece_weight(FigureType t) {
     return FIGURE_WEIGHTS[static_cast<int>(t)];
+}
+
+int manhattan(const Cell& a, const Cell& b) {
+    int dx = a.x - b.x; if (dx < 0) dx = -dx;
+    int dy = a.y - b.y; if (dy < 0) dy = -dy;
+    return dx + dy;
+}
+
+int file_dist_to_center(char x) {
+    int d = x - 'd';
+    if (d < 0) d = -d;
+    int e = x - 'e';
+    if (e < 0) e = -e;
+    return (d < e) ? d : e;
+}
+
+int rank_dist_to_center(char y) {
+    int d = y - '4';
+    if (d < 0) d = -d;
+    int e = y - '5';
+    if (e < 0) e = -e;
+    return (d < e) ? d : e;
+}
+
+int king_center_bonus(const Cell& k) {
+    return 8 * (6 - file_dist_to_center(k.x) - rank_dist_to_center(k.y));
 }
 
 // фигура на клетке (если есть)
@@ -823,6 +891,25 @@ int score_move_simple(const InputData& in, const Move& m) {
         score += 2;
     }
 
+    // если встали на битую клетку - штраф
+    BoardMap b = make_board_map(in);
+    BoardMap nb = apply_move_copy(b, m);
+    if (is_square_attacked(nb, m.to.x, m.to.y, '-')) {
+        int lose = mover ? piece_weight(mover->type) : 1;
+        score -= lose * 50;
+    }
+
+    return score;
+}
+
+// легкая версия оценки для сортировки (без тяжелой проверки "битая клетка")
+int score_move_ordering(const InputData& in, const Move& m) {
+    int score = 0;
+    const Figure* captured = find_figure_at(in, m.to.x, m.to.y);
+    if (captured && captured->color == '-') score += piece_weight(captured->type) * 100;
+    if ((m.to.x == 'd' || m.to.x == 'e') && (m.to.y == '4' || m.to.y == '5')) score += 10;
+    const Figure* mover = find_figure_at(in, m.from.x, m.from.y);
+    if (mover && mover->type == FigureType::PAWN) score += 2;
     return score;
 }
 
@@ -833,11 +920,163 @@ bool is_pawn_promotion_move(const InputData& in, const Move& m) {
     return (m.to.y == '1' || m.to.y == '8');
 }
 
+// убираем ходы с пешкой на 1/8 (promotion пока не поддержан)
+std::vector<Move> without_promotion_moves(const InputData& in, const std::vector<Move>& moves) {
+    std::vector<Move> out;
+    out.reserve(moves.size());
+    for (const auto& m : moves) {
+        if (!is_pawn_promotion_move(in, m)) out.push_back(m);
+    }
+    return out;
+}
+
+// делаем следующее состояние после хода (с упрощениями для мидгейма)
+InputData make_next_state(const InputData& in, const Move& m) {
+    InputData out = in;
+    BoardMap b = make_board_map(in);
+    BoardMap nb = apply_move_copy(b, m);
+
+    out.figures.clear();
+    out.figures.reserve(nb.size());
+    for (const auto& it : nb) {
+        Figure f;
+        f.pos = {it.first[0], it.first[1]};
+        f.color = it.second.first;
+        f.type = it.second.second;
+        out.figures.push_back(f);
+    }
+    out.count = static_cast<int>(out.figures.size());
+    out.ep_square = {};
+    out.castling[0] = out.castling[1] = out.castling[2] = out.castling[3] = false; // [CHECK] позже можно точнее
+    return out;
+}
+
+// мало ли фигуры кроме пешек и королей -> это конец партии
+bool is_endgame_position(const InputData& in) {
+    int total_non_pawn = 0;
+    for (const auto& f : in.figures) {
+        if (f.type == FigureType::KING || f.type == FigureType::PAWN) continue;
+        total_non_pawn += piece_weight(f.type);
+    }
+    return total_non_pawn <= 14; // порог из help/эндшпиль.md
+}
+
+bool is_passed_pawn(const BoardMap& b, const Figure& p) {
+    int dir = pawn_dir_for_color(b, p.color);
+    char enemy = (p.color == '+') ? '-' : '+';
+    for (char fx = static_cast<char>(p.pos.x - 1); fx <= static_cast<char>(p.pos.x + 1); fx++) {
+        if (fx < 'a' || fx > 'h') continue;
+        char y = static_cast<char>(p.pos.y + dir);
+        while (y >= '1' && y <= '8') {
+            if (piece_color(b, fx, y) == enemy && piece_type(b, fx, y) == FigureType::PAWN) return false;
+            y = static_cast<char>(y + dir);
+        }
+    }
+    return true;
+}
+
+int passed_pawn_bonus(const Figure& p) {
+    int rank = p.pos.y - '0';
+    int advance = (p.color == '+') ? (rank - 2) : (7 - rank);
+    if (advance <= 0) return 0;
+    if (advance == 1) return 12;
+    if (advance == 2) return 20;
+    if (advance == 3) return 35;
+    if (advance == 4) return 55;
+    return 80;
+}
+
+bool pawn_is_isolated(const BoardMap& b, const Figure& p) {
+    for (int df : {-1, 1}) {
+        char fx = static_cast<char>(p.pos.x + df);
+        if (fx < 'a' || fx > 'h') continue;
+        for (char y = '1'; y <= '8'; y++) {
+            if (piece_color(b, fx, y) == p.color && piece_type(b, fx, y) == FigureType::PAWN) return false;
+        }
+    }
+    return true;
+}
+
+bool pawn_is_doubled(const BoardMap& b, const Figure& p) {
+    for (char y = '1'; y <= '8'; y++) {
+        if (y == p.pos.y) continue;
+        if (piece_color(b, p.pos.x, y) == p.color && piece_type(b, p.pos.x, y) == FigureType::PAWN) return true;
+    }
+    return false;
+}
+
+int square_rule_bonus(const Figure& p, const Cell& enemy_king) {
+    int steps = (p.color == '+') ? ('8' - p.pos.y) : (p.pos.y - '1');
+    if (steps <= 0) return 0;
+    Cell promo = {p.pos.x, (p.color == '+') ? '8' : '1'};
+    int king_dist = manhattan(enemy_king, promo);
+    if (king_dist > steps) return 80; // король не в квадрате пешки
+    return 0;
+}
+
+// обычная оценка (мидгейм)
+int evaluate_midgame(const InputData& in) {
+    int score = 0;
+    for (const auto& f : in.figures) {
+        int w = piece_weight(f.type) * 100;
+        score += (f.color == '+') ? w : -w;
+    }
+
+    // безопасность королей
+    BoardMap b = make_board_map(in);
+    Cell my_king = find_king_cell(b, '+');
+    Cell opp_king = find_king_cell(b, '-');
+    if (my_king.valid() && is_square_attacked(b, my_king.x, my_king.y, '-')) score -= 120;
+    if (opp_king.valid() && is_square_attacked(b, opp_king.x, opp_king.y, '+')) score += 120;
+
+    return score;
+}
+
+// отдельная оценка эндшпиля
+int evaluate_endgame(const InputData& in) {
+    int score = 0;
+    BoardMap b = make_board_map(in);
+    Cell my_king = find_king_cell(b, '+');
+    Cell opp_king = find_king_cell(b, '-');
+
+    // материал
+    for (const auto& f : in.figures) {
+        int w = piece_weight(f.type) * 100;
+        score += (f.color == '+') ? w : -w;
+    }
+
+    // король в центре = хорошо
+    if (my_king.valid()) score += king_center_bonus(my_king);
+    if (opp_king.valid()) score -= king_center_bonus(opp_king);
+
+    // пешечная структура + проходные + квадрат
+    for (const auto& f : in.figures) {
+        if (f.type != FigureType::PAWN) continue;
+        int sign = (f.color == '+') ? 1 : -1;
+
+        if (pawn_is_isolated(b, f)) score += sign * (-10);
+        if (pawn_is_doubled(b, f)) score += sign * (-12);
+        if (is_passed_pawn(b, f)) {
+            score += sign * passed_pawn_bonus(f);
+            Cell enemy_king = (f.color == '+') ? opp_king : my_king;
+            if (enemy_king.valid()) score += sign * square_rule_bonus(f, enemy_king);
+        }
+    }
+
+    return score;
+}
+
+// общая оценка: сама выбирает режим
+int evaluate_position(const InputData& in) {
+    return is_endgame_position(in) ? evaluate_endgame(in) : evaluate_midgame(in);
+}
+
 class ChessBot {
 private:
     OpeningBook opening;            // библиотека дебютов
     std::string move_history;       // история ходов через '_'
     bool bot_is_white = true;       // сторона изначально считается белой
+    Move last_move;                 // последний наш ход (для анти-цикла)
 
     // добавляем полуход в историю
     void append_history(const std::string& ply) {
@@ -856,14 +1095,66 @@ private:
         return false;
     }
 
+    bool has_piece_at(const InputData& in, char x, char y, char color, FigureType type) const {
+        for (const auto& f : in.figures) {
+            if (f.pos.x == x && f.pos.y == y && f.color == color && f.type == type) return true;
+        }
+        return false;
+    }
+
+    // старт белых: только реальная стартовая позиция, а не "кто-то стоит на e2"
+    bool is_white_start_position(const InputData& in) const {
+        if (in.count != 32) return false;
+        return has_piece_at(in, 'e', '2', '+', FigureType::PAWN) &&
+               has_piece_at(in, 'e', '1', '+', FigureType::KING) &&
+               has_piece_at(in, 'e', '7', '-', FigureType::PAWN) &&
+               has_piece_at(in, 'e', '8', '-', FigureType::KING);
+    }
+
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point deadline;
+    bool search_timeout = false;
+
+    bool time_is_over() const {
+        return Clock::now() >= deadline;
+    }
+
+    // alpha-beta negamax (по времени)
+    int alphabeta(const InputData& in, int depth, int alpha, int beta, char side) {
+        if (time_is_over()) {
+            search_timeout = true;
+            return 0;
+        }
+        if (depth == 0) {
+            int e = evaluate_position(in);
+            return (side == '+') ? e : -e;
+        }
+
+        auto legal = generate_all_legal_moves_color(in, side);
+        auto moves = without_promotion_moves(in, legal);
+        if (moves.empty()) {
+            int e = evaluate_position(in);
+            return (side == '+') ? e : -e;
+        }
+
+        for (const auto& m : moves) {
+            InputData next = make_next_state(in, m);
+            int score = -alphabeta(next, depth - 1, -beta, -alpha, (side == '+') ? '-' : '+');
+            if (search_timeout) return 0;
+            if (score > alpha) alpha = score;
+            if (alpha >= beta) break;
+        }
+        return alpha;
+    }
+
     // совершаем ход из библиотеки дебютов: откуда -> кудась
     Move get_opening_move(int variation_seed, const InputData& in) {
         std::string key = make_position_key();
         OpeningBook::BookMove response =
             key.empty() ? OpeningBook::BookMove{"", ""} : opening.lookup(bot_is_white, key, variation_seed);
 
-        // если истории еще нет, но мы белые в старте - берем первый ход белых
-        if (response.move.empty() && key.empty() && bot_is_white && has_piece_at(in, 'e', '2', '+')) {
+        // если истории еще нет, но мы белые и это реально старт - берем первый ход белых
+        if (response.move.empty() && key.empty() && bot_is_white && is_white_start_position(in)) {
             // старт белых: первый ход из пустого ключа
             response = opening.lookup(true, "", variation_seed);
         }
@@ -881,33 +1172,64 @@ private:
             m.from = {move[0], move[1]};
             m.to = {move[2], move[3]};
             // [CHECK] - ДЕБАГ ДЕБЮТОВ, ШОБ ЗНАТЬ КАКОЙ СЕЙЧАС РАБОТАЕТ. ПОТОМ УДАЛИТЬ
-            debug("Дебют: " + opening_name + " | ход: " + move);
+            debug("Opening(book): depth=book, дебют=" + opening_name + ", ход=" + move);
             return m;
         }
         return Move();
     }
 
-    // если библиотеки не нашли ход - берем лучший по простой оценке
-    Move get_midgame_move_simple(const InputData& in) {
-        auto legal_moves = generate_all_our_legal_moves(in); // тут уже легальные
-        std::vector<Move> moves;
-        moves.reserve(legal_moves.size());
-        for (const auto& m : legal_moves) {
-            if (!is_pawn_promotion_move(in, m)) moves.push_back(m);
-        }
+    // если библиотеки не нашли ход - считаем через alpha-beta (мидгейм/эндшпиль)
+    Move get_search_move(const InputData& in) {
+        bool endgame = is_endgame_position(in);
+        auto root_legal = generate_all_legal_moves_color(in, '+');
+        auto moves = without_promotion_moves(in, root_legal);
         if (moves.empty()) return Move();
 
-        Move best = moves[0];
-        int best_score = score_move_simple(in, best);
-        for (std::size_t i = 1; i < moves.size(); i++) {
-            int s = score_move_simple(in, moves[i]);
-            if (s > best_score) {
-                best_score = s;
-                best = moves[i];
+        // быстрый ordering: считаем один раз, потом сортируем
+        std::vector<std::pair<int, Move>> scored;
+        scored.reserve(moves.size());
+        for (const auto& m : moves) scored.push_back({score_move_ordering(in, m), m});
+        std::stable_sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {
+            return a.first > b.first;
+        });
+        for (std::size_t i = 0; i < moves.size(); i++) moves[i] = scored[i].second;
+
+        int budget_ms = endgame ? 500 : 350; // держим запас до серверного таймаута
+        deadline = Clock::now() + std::chrono::milliseconds(budget_ms);
+        search_timeout = false;
+
+        Move best = moves[0];       // fallback, если время резко кончится
+        int best_score = -1000000000;
+        int completed_depth = 0;
+
+        // iterative deepening: 1,2,3... пока есть время
+        for (int depth = 1; depth <= 12; depth++) {
+            if (time_is_over()) break;
+            int local_best_score = -1000000000;
+            Move local_best = best;
+
+            for (const auto& m : moves) {
+                if (time_is_over()) { search_timeout = true; break; }
+                InputData next = make_next_state(in, m);
+                int s = -alphabeta(next, depth - 1, -1000000000, 1000000000, '-');
+                // анти-зацикливание: не любим ходы "туда-сюда" той же фигурой
+                if (m.from == last_move.to && m.to == last_move.from) s -= 40;
+                if (search_timeout) break;
+                if (s > local_best_score) {
+                    local_best_score = s;
+                    local_best = m;
+                }
             }
+
+            if (search_timeout) break;
+            best = local_best;
+            best_score = local_best_score;
+            completed_depth = depth;
         }
 
-        debug("Midgame(simple): ходов=" + std::to_string(moves.size()) + ", score=" + std::to_string(best_score));
+        debug(std::string(endgame ? "Endgame(ab): ходов=" : "Midgame(ab): ходов=") + std::to_string(moves.size()) +
+              ", depth=" + std::to_string(completed_depth) +
+              ", score=" + std::to_string(best_score));
         return best;
     }
 
@@ -917,19 +1239,18 @@ public:
     // устанавливаем сторону
     void set_side(bool is_white) {
         bot_is_white = is_white;
+        G_BOT_IS_WHITE = is_white;
     }
     // совершает ход 
     Move get_move(const InputData& in) {
-        // если мы черные и еще нет хода соперника в истории, то пока нечего играть
-        if (!bot_is_white && move_history.empty()) return Move();
-
         Move m = get_opening_move(in.pong, in);
         if (!m.valid()) {
-            m = get_midgame_move_simple(in); // [CHECK!] пока без alpha-beta
+            m = get_search_move(in);
         }
         // добавляем в историю, если ход валиден
         if (m.valid()) {
             append_history(m.str());
+            last_move = m;
         }
         return m;
     }
@@ -957,6 +1278,9 @@ int main() {
             side_known = true;
             debug(std::string("Сторона бота: ") + (is_white ? "white" : "black"));
         }
+
+        // дебаг пешек каждый ход (пушо полезно для эндшпиля/анализа)
+        debug(pawn_layout_debug(in));
 
         // добавляем ход соперника в историю
         if (has_prev) {
